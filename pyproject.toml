@@ -1,0 +1,22 @@
+[project]
+name = "sql-agent"
+version = "0.1.0"
+description = "LangGraph SQL Agent"
+authors = [
+    { name = "Ravi" }
+]
+requires-python = ">=3.10"
+
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "langgraph",
+    "langchain",
+    "openai",
+    "sqlalchemy",
+    "python-dotenv",
+    "psycopg2-binary"
+]
+
+[tool.setuptools]
+packages = ["app"]
