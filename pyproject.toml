@@ -12,11 +12,13 @@ dependencies = [
     "uvicorn",
     "langgraph",
     "langchain",
-    "openai",
+    "langchain-google-genai",
     "sqlalchemy",
     "python-dotenv",
+    "pydantic",
     "psycopg2-binary"
 ]
+
 
 [tool.setuptools]
 packages = ["app"]
