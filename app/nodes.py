@@ -4,7 +4,6 @@ from app.db import engine
 from sqlalchemy import inspect, text
 from pydantic_models.agentState import AgentState
 from app.llm import llm
-from google.api_core.exceptions import ResourceExhausted
 
 blocked_keywords = [
     "DROP", "DELETE", "ALTER", "UPDATE", "INSERT",
@@ -20,10 +19,7 @@ def is_safe_query(query: str) -> bool:
     Check if the SQL query is safe to execute by ensuring it does not contain any blocked keywords.
     """
     query_upper = query.upper()
-    if not query.startswith("SELECT"):
-        return False
-
-    if ";" in query:
+    if not query_upper.startswith("SELECT"):
         return False
     
     for keyword in blocked_keywords:
@@ -74,29 +70,13 @@ def sql_generator(state: AgentState):
     
     try:
         response = llm.invoke(system_prompt)
-        content = response.content
-
-        if isinstance(content, str):
-            state.sql_query = content
-        else:
-            state.sql_query = json.dumps(content)
-
-        state.error = None
-
-    except ResourceExhausted:
-        sleep(10)
-        response = llm.invoke(system_prompt)
-        content = response.content
-
-        if isinstance(content, str):
-            state.sql_query = content
-        else:
-            state.sql_query = json.dumps(content)
+        content = response.content.strip("```sql\n").strip("```")
+        state.sql_query = content
         state.error = None
 
     except Exception as e:
+        print("Error generating SQL query:", str(e))
         state.error = str(e)
-        state.attempts += 1
 
     return state
 
@@ -106,13 +86,38 @@ def execute_query(state: AgentState):
     """
     if not state.sql_query or not is_safe_query(state.sql_query):
         state.error = "The generated SQL query is not safe to execute."
+        state.attempts += 1
         return state
     
     with engine.connect() as conn:
         try:
             result = conn.execute(text(state.sql_query))
-            state.result = json.dumps([dict(row) for row in result])
+            print("Query executed successfully. Fetching results...")
+            
+            rows = result.fetchall()
+            print(f"{isinstance(rows, list)}: {rows}")
+            state.result =  str(rows)
+            state.error = None
         except Exception as e:
             state.error = str(e)
             state.attempts += 1
+    return state
+
+def convert_query_to_text(state: AgentState):
+    """
+    Convert the SQL query and result to text format for better readability.
+    """
+    system_prompt = f"""You are an assistant that converts SQL queries and their results into a more human-readable format.
+    Here is the SQL query:
+    {state.sql_query}
+    Here is the result of the SQL query:
+    {state.result}
+    Convert the SQL query and its result into a more human-readable format.
+    """
+    try:
+        response = llm.invoke(system_prompt)
+        state.natural_language_output = response.content.strip()    
+        state.error = None
+    except Exception as e:
+        state.error = str(e)
     return state
