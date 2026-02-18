@@ -12,7 +12,7 @@ dependencies = [
     "uvicorn",
     "langgraph",
     "langchain",
-    "langchain-google-genai",
+    "langchain-groq", 
     "sqlalchemy",
     "python-dotenv",
     "pydantic",

@@ -9,11 +9,12 @@ class QueryRequest(BaseModel):
 from typing import Optional, Any
 
 class QueryResponse(BaseModel):
-    answer: Optional[str] = None
+    question: Optional[str] = None
     sql_query: Optional[str] = None
     result: Optional[Any] = None
+    human_readable_result: Optional[str] = None
     error: Optional[str] = None
-    attempts: int
+    attempts: int = 0
 
 app = FastAPI()
 
@@ -28,9 +29,10 @@ def ask_question(request: QueryRequest) -> QueryResponse:
     final_state = AgentState(**raw_result)
 
     return QueryResponse(
-        answer=final_state.result,
+        question=final_state.question,
         sql_query=final_state.sql_query,
         result=final_state.result,
+        human_readable_result=final_state.natural_language_output,
         error=final_state.error,
         attempts=final_state.attempts
     )
