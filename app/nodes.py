@@ -60,9 +60,21 @@ def get_schema(state: AgentState) -> AgentState:
         db_schema = {}
         for table in tables:
             columns = inspector.get_columns(table)
-            db_schema[table] = [column["name"] for column in columns]
-
-        state.db_schema = json.dumps(db_schema)
+            foreign_keys = inspector.get_foreign_keys(table)
+            db_schema[table] = {
+                "columns": [
+                    {"name": col["name"], "type": str(col["type"])}
+                    for col in columns
+                ],
+                "foreign_keys": [
+                    {
+                        "column": fk["constrained_columns"],
+                        "references": f"{fk['referred_table']}.{fk['referred_columns']}"
+                    }
+                    for fk in foreign_keys
+                ]
+            }
+        state.db_schema = json.dumps(db_schema, indent=2)
     except Exception as e:
         state.error = str(e)
     return state
@@ -71,13 +83,37 @@ def get_schema(state: AgentState) -> AgentState:
 def sql_generator(state: AgentState):
     structured_llm = llm.with_structured_output(SQLOutput)
 
-    system_prompt = f"""You are an SQL assistant. Given a database schema and a user question, generate a syntactically correct SQL query.
+    # Build error context for retries
+    error_context = ""
+    if state.error and state.attempts > 0:
+        error_context = f"""
+    The previous SQL query failed with this error:
+    {state.error}
+    
+    Previous query that failed:
+    {state.sql_query}
+    
+    Please fix the query based on the error above.
+    """
+    system_prompt = f"""You are an expert SQL assistant. Given a database schema and a user question, generate a syntactically correct SQL query.
     Database Schema:
     {state.db_schema}
     Rules:
     - Use only table and column names from the schema
-    - Return only the SQL query, no explanations or comments
+    - This is a SQLite database
+    - All date/time columns are stored as TEXT in the format 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DD'
+    - For date filtering, always use string comparison or strftime():
+        - Year filter:   strftime('%Y', order_date) = '2023'
+        - Month filter:  strftime('%Y-%m', order_date) = '2023-07'
+        - Past 30 days:  order_date >= date('now', '-30 days')
+        - Past 1 month:  order_date >= date('now', '-1 month')
+    - For aggregations use SUM(), COUNT(), AVG() with GROUP BY
+    - JOIN tables using foreign key relationships in the schema
+    - Always alias aggregated columns (e.g. SUM(amount) AS total_revenue)
+    - Return only the SQL query, no explanation
+    {error_context}
     """
+
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=state.question),
@@ -109,7 +145,7 @@ def execute_query(state: AgentState):
             state.result = str(rows)
             state.error = None
         except Exception as e:
-            state.error = str(e)
+            state.error = f"SQL execution error: {str(e)}" 
             state.attempts += 1
     return state
 
@@ -134,9 +170,9 @@ def convert_query_to_text(state: AgentState):
     ]
 
     try:
-        structured_llm = llm.with_structured_output(NaturalLanguageOutput)
-        response = structured_llm.invoke(messages)
-        state.natural_language_output = response.natural_language_output.strip()
+        # structured_llm = llm.with_structured_output(NaturalLanguageOutput)
+        response = llm.invoke(messages)
+        state.natural_language_output = response.content.strip()
         state.error = None
     except Exception as e:
         state.error = str(e)
