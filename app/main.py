@@ -1,24 +1,28 @@
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
-from app.graph import graph
-from pydantic_models.agentState import AgentState
-
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
-class QueryRequest(BaseModel):
-    question: str
 from typing import Optional, Any
+from app.mcp_client import run_agent
 
-class QueryResponse(BaseModel):
-    question: Optional[str] = None
-    sql_query: Optional[str] = None
-    result: Optional[Any] = None
-    human_readable_result: Optional[str] = None
-    error: Optional[str] = None
-    attempts: int = 0
 
-app = FastAPI()
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
+class ChatRequest(BaseModel):
+    message: str
+    history: Optional[list[dict]] = []   # [{"role": "user"|"assistant", "content": "..."}]
 
+
+class ChatResponse(BaseModel):
+    reply: str
+    tool_used: Optional[str] = None      # which MCP tool was called (if any)
+    sql_query: Optional[str] = None      # the generated SQL (if a DB query was made)
+
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+app = FastAPI(title="AI SQL Assistant")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,27 +32,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/health")
 def health():
-    return {"status": "ok"} 
+    return {"status": "ok"}
 
-@app.post("/ask", response_model=QueryResponse)
-def ask_question(request: QueryRequest) -> QueryResponse:
-    state = AgentState(question=request.question)
 
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest) -> ChatResponse:
+    """
+    Main chat endpoint. Accepts a message and optional chat history.
+    The agent decides whether to call a database tool or reply directly.
+
+    Examples:
+      "hi"                        → plain reply, no tool
+      "what tables exist?"        → calls get_schema tool
+      "total sales in 2023?"      → calls query_database tool
+    """
     try:
-        raw_result = graph.invoke(state)
+        result = await run_agent(
+            user_message=request.message,
+            chat_history=request.history,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    final_state = AgentState(**raw_result)
 
-    return QueryResponse(
-        question=final_state.question,
-        sql_query=final_state.sql_query,
-        result=final_state.result,
-        human_readable_result=final_state.natural_language_output,
-        error=final_state.error,
-        attempts=final_state.attempts
+    return ChatResponse(
+        reply=result["reply"],
+        tool_used=result["tool_used"],
+        sql_query=result["sql_query"],
     )
-
-

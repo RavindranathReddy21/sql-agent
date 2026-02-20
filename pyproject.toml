@@ -12,11 +12,13 @@ dependencies = [
     "uvicorn",
     "langgraph",
     "langchain",
-    "langchain-groq", 
+    "langchain-core",
+    "langchain-groq",
     "sqlalchemy",
     "python-dotenv",
     "pydantic",
-    "psycopg2-binary"
+    "fastmcp",
+    "httpx",
 ]
 
 

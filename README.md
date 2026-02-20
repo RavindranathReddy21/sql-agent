@@ -1,151 +1,138 @@
-# SQL Agent with LangGraph and FastAPI
-
-A production-style SQL Agent built using LangGraph, FastAPI, and SQLite.
-
-This system converts natural language questions into SQL queries,
-executes them safely, and returns structured responses through a REST
-API.
-
-## Overview
-
-The agent is implemented using a graph-based workflow powered by
-LangGraph.\
-It dynamically extracts database schema information, generates SQL using
-an LLM, executes the query, and retries automatically if errors occur.
-
-The system is designed with explicit state management and controlled
-execution flow.
-
-## Architecture
-
-User Question\
-→ Schema Extraction\
-→ SQL Generation (LLM)\
-→ SQL Execution\
-→ Error Check\
-→ SQL Fix (if needed)\
-→ Response Formatting
-
-The workflow ensures deterministic orchestration around probabilistic
-LLM reasoning.
+# AI SQL Assistant — MCP Architecture
 
 ## Project Structure
 
-    sql-agent/
-    │
-    ├── app/
-    │   ├── main.py        # FastAPI entry point
-    │   ├── graph.py       # LangGraph workflow
-    │   ├── nodes.py       # Agent nodes
-    │   ├── db.py          # Database connection
-    │   ├── models.py      # Request/response models
-    │
-    ├── database/
-    │   ├── schema.sql     # Table definitions
-    │   ├── seed.sql       # Dummy relational data
-    │
-    ├── scripts/
-    │   └── init_db.py     # Database initialization script
-    │
-    ├── .env
-    ├── pyproject.toml
-    └── README.md
-
-## Features
-
--   LLM-powered SQL generation\
--   Automatic SQL error correction loop\
--   SQL safety layer (blocks destructive queries)\
--   Dynamic schema extraction from SQLite\
--   FastAPI REST interface\
--   Relational database with foreign key relationships\
--   Dummy data for realistic join queries
-
-## Setup Instructions
-
-### 1. Create Virtual Environment
-
-``` bash
-python -m venv venv
-venv\Scripts\activate
+```
+project/
+├── app/                        # FastAPI app (the client)
+│   ├── main.py                 # API endpoints — /health, /chat
+│   ├── mcp_client.py           # Connects to MCP server, runs agentic loop
+│   ├── nodes.py                # LangGraph pipeline nodes (unchanged)
+│   ├── graph.py                # LangGraph graph definition (unchanged)
+│   ├── llm.py                  # Groq LLM setup (unchanged)
+│   ├── db.py                   # SQLAlchemy engine (unchanged)
+│   └── __init__.py
+│
+├── mcp_server/                 # MCP server (the toolbox)
+│   ├── server.py               # FastMCP server — exposes tools over HTTP/SSE
+│   ├── tools/
+│   │   ├── database_tools.py   # Core logic for each tool
+│   │   └── __init__.py
+│   └── __init__.py
+│
+├── pydantic_models/
+│   ├── agentState.py           # AgentState, SQLOutput, NaturalLanguageOutput
+│   └── __init__.py
+│
+├── requirements.txt
+└── .env
 ```
 
-### 2. Install Dependencies
+## How It Works
 
-``` bash
-pip install -e .
+```
+User message
+    │
+    ▼
+FastAPI /chat  (app/main.py)
+    │
+    ▼
+MCP Client  (app/mcp_client.py)
+    │  Sends: message + tool definitions
+    ▼
+LLM (Llama 3.3 70B via Groq)
+    │  Decides: do I need a tool?
+    ├─── NO  → reply directly (e.g. "hi" → "Hello!")
+    │
+    └─── YES → tool_call: { name, args }
+                    │
+                    ▼
+             MCP Server  (mcp_server/server.py on :8001)
+                    │  Runs the right tool
+                    ├── query_database → LangGraph pipeline → SQL → result → explanation
+                    └── get_schema     → SQLAlchemy inspector → schema JSON
+                    │
+                    ▼
+             Tool result returned to MCP Client
+                    │
+                    ▼
+             LLM forms final reply using tool result
+                    │
+                    ▼
+             FastAPI returns ChatResponse
 ```
 
-### 3. Configure Environment Variables
+## Setup
 
-Create a `.env` file:
-
-    OPENAI_API_KEY=your_key_here
-    DATABASE_URL=sqlite:///mydb.db
-
-### 4. Initialize Database
-
-``` bash
-python scripts/init_db.py
+### 1. Install dependencies
+```bash
+pip install -r requirements.txt
 ```
 
-This will:
-
--   Create `mydb.db`
--   Create all relational tables
--   Insert dummy data
-
-### 5. Start the API Server
-
-``` bash
-uvicorn app.main:app --reload
+### 2. Create .env file
+```
+DATABASE_URL=sqlite:///./your_database.db
+GROQ_API_KEY=your_groq_api_key_here
 ```
 
-Access API documentation at:
+### 3. Start the MCP server (Terminal 1)
+```bash
+python -m mcp_server.server
+```
+MCP server runs on http://localhost:8001
 
-    http://127.0.0.1:8000/docs
+### 4. Start the FastAPI app (Terminal 2)
+```bash
+python run.py
+```
+FastAPI runs on http://localhost:8000
 
-## Example Queries
+## API Usage
 
--   Show total revenue per user\
--   List users with pending payments\
--   Which products sold the most\
--   Show top 5 orders by total amount\
--   How many orders did each user place
+### POST /chat
+```json
+// Request
+{
+  "message": "What were total sales in 2023?",
+  "history": []
+}
 
-## SQL Safety
+// Response
+{
+  "reply": "Total sales in 2023 were $4.2M across 1,847 orders...",
+  "tool_used": "query_database",
+  "sql_query": "SELECT SUM(amount) AS total_revenue FROM orders WHERE strftime('%Y', order_date) = '2023'"
+}
+```
 
-Only SELECT statements are permitted.\
-Destructive operations such as DROP, DELETE, UPDATE, ALTER, and TRUNCATE
-are blocked before execution.
+### With chat history (multi-turn)
+```json
+{
+  "message": "Which month was the best?",
+  "history": [
+    { "role": "user", "content": "What were total sales in 2023?" },
+    { "role": "assistant", "content": "Total sales in 2023 were $4.2M..." }
+  ]
+}
+```
 
-## Tech Stack
+### Non-data message (no tool called)
+```json
+// Request
+{ "message": "hi", "history": [] }
 
--   Python 3.11+
--   FastAPI
--   LangGraph
--   LangChain
--   SQLAlchemy
--   SQLite
+// Response
+{
+  "reply": "Hello! I'm your data assistant. Ask me anything about your database — sales, customers, orders, and more.",
+  "tool_used": null,
+  "sql_query": null
+}
+```
 
-## Future Improvements
+## Adding a New Tool
 
--   PostgreSQL support\
--   JWT-based authentication\
--   Query caching\
--   Streaming responses\
--   Query history logging\
--   Docker containerization\
--   CI/CD pipeline
+1. Add the logic function in `mcp_server/tools/database_tools.py`
+2. Add the `@mcp.tool()` decorated function in `mcp_server/server.py`
+3. Add the tool definition to the `TOOLS` list in `app/mcp_client.py`
 
-## Purpose
-
-This project demonstrates:
-
--   Controlled agent orchestration using LangGraph\
--   Structured state management\
--   Reliable LLM integration\
--   Backend API engineering\
--   Relational database integration
-
-Designed as a production-style AI system.
+That's it — the LLM will automatically start using the new tool when appropriate.
