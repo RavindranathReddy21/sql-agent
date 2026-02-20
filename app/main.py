@@ -28,6 +28,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/health")
+def health():
+    return {"status": "ok"} 
+
 @app.post("/ask", response_model=QueryResponse)
 def ask_question(request: QueryRequest) -> QueryResponse:
     state = AgentState(question=request.question)
