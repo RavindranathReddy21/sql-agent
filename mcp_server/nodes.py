@@ -1,42 +1,23 @@
 import json
-from time import sleep
 from app.db import engine
 from sqlalchemy import inspect, text
-from pydantic_models.agentState import AgentState, SQLOutput, NaturalLanguageOutput
+from pydantic_models.agentState import AgentState, SQLOutput
 from app.llm import llm
 from langchain_core.messages import SystemMessage, HumanMessage
 
 blocked_keywords = [
-    "DROP",
-    "DELETE",
-    "ALTER",
-    "UPDATE",
-    "INSERT",
-    "CREATE",
-    "TRUNCATE",
-    "EXEC",
-    "GRANT",
-    "REVOKE",
-    "MERGE",
-    "CALL",
-    "ATTACH",
-    "DETACH",
-    "PRAGMA",
-    "VACUUM",
-    "ANALYZE",
+    "DROP", "DELETE", "ALTER", "UPDATE", "INSERT", "CREATE",
+    "TRUNCATE", "EXEC", "GRANT", "REVOKE", "MERGE", "CALL",
+    "ATTACH", "DETACH", "PRAGMA", "VACUUM", "ANALYZE",
 ]
 
 MAX_ATTEMPTS = 3
 
 
 def is_safe_query(query: str) -> bool:
-    """
-    Check if the SQL query is safe to execute by ensuring it does not contain any blocked keywords.
-    """
     query_upper = query.upper()
     if not query_upper.startswith("SELECT"):
         return False
-
     for keyword in blocked_keywords:
         if keyword in query_upper:
             return False
@@ -44,16 +25,12 @@ def is_safe_query(query: str) -> bool:
 
 
 def route_after_execution(state: AgentState) -> str:
-    """Determine the next node based on the execution result."""
     if state.error and state.attempts < MAX_ATTEMPTS:
         return "retry"
     return "finish"
 
 
 def get_schema(state: AgentState) -> AgentState:
-    """
-    Get the schema for the nodes.
-    """
     try:
         inspector = inspect(engine)
         tables = inspector.get_table_names()
@@ -80,21 +57,21 @@ def get_schema(state: AgentState) -> AgentState:
     return state
 
 
-def sql_generator(state: AgentState):
+def sql_generator(state: AgentState) -> AgentState:
     structured_llm = llm.with_structured_output(SQLOutput)
 
-    # Build error context for retries
     error_context = ""
     if state.error and state.attempts > 0:
         error_context = f"""
     The previous SQL query failed with this error:
     {state.error}
-    
+
     Previous query that failed:
     {state.sql_query}
-    
+
     Please fix the query based on the error above.
     """
+
     system_prompt = f"""You are an expert SQL assistant. Given a database schema and a user question, generate a syntactically correct SQL query.
     Database Schema:
     {state.db_schema}
@@ -106,7 +83,6 @@ def sql_generator(state: AgentState):
         - Year filter:   strftime('%Y', order_date) = '2023'
         - Month filter:  strftime('%Y-%m', order_date) = '2023-07'
         - Past 30 days:  order_date >= date('now', '-30 days')
-        - Past 1 month:  order_date >= date('now', '-1 month')
     - For aggregations use SUM(), COUNT(), AVG() with GROUP BY
     - JOIN tables using foreign key relationships in the schema
     - Always alias aggregated columns (e.g. SUM(amount) AS total_revenue)
@@ -129,10 +105,7 @@ def sql_generator(state: AgentState):
     return state
 
 
-def execute_query(state: AgentState):
-    """
-    Execute the SQL query and store the result in the state.
-    """
+def execute_query(state: AgentState) -> AgentState:
     if not state.sql_query or not is_safe_query(state.sql_query):
         state.error = "The generated SQL query is not safe to execute."
         state.attempts += 1
@@ -145,19 +118,19 @@ def execute_query(state: AgentState):
             state.result = str(rows)
             state.error = None
         except Exception as e:
-            state.error = f"SQL execution error: {str(e)}" 
+            state.error = f"SQL execution error: {str(e)}"
             state.attempts += 1
     return state
 
 
-def convert_query_to_text(state: AgentState):
+def convert_query_to_text(state: AgentState) -> AgentState:
     system_prompt = """You are a helpful data analyst assistant. Explain SQL query results in plain English that anyone can understand.
     Your summary should:
     - Directly answer what the data shows
     - Highlight key numbers, trends, or insights
     - Use natural language (avoid mentioning SQL, tables, or columns by name)
-    - Be formatted for easy reading (use bullet points or short paragraphs where appropriate)
-    Respond with only the summary. Do not explain what the query does technically — focus on what the data means."""
+    - Be formatted for easy reading
+    Respond with only the summary."""
 
     user_message = f"""SQL Query:
     {state.sql_query}
@@ -170,7 +143,6 @@ def convert_query_to_text(state: AgentState):
     ]
 
     try:
-        # structured_llm = llm.with_structured_output(NaturalLanguageOutput)
         response = llm.invoke(messages)
         state.natural_language_output = response.content.strip()
         state.error = None

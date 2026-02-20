@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, END
 from pydantic_models.agentState import AgentState
-from app.nodes import get_schema, sql_generator, execute_query, route_after_execution, convert_query_to_text
+from mcp_server.nodes import get_schema, sql_generator, execute_query, route_after_execution, convert_query_to_text
 
 builder = StateGraph(AgentState)
 
