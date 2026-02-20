@@ -1,3 +1,4 @@
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 from app.graph import graph
 from pydantic_models.agentState import AgentState
@@ -17,6 +18,15 @@ class QueryResponse(BaseModel):
     attempts: int = 0
 
 app = FastAPI()
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.post("/ask", response_model=QueryResponse)
 def ask_question(request: QueryRequest) -> QueryResponse:
