@@ -2,8 +2,6 @@
 
 A natural language data assistant built with FastAPI, LangGraph, and Groq (Llama 3.3 70B). Ask questions in plain English — the system figures out the right approach, queries your database, and explains the results conversationally.
 
----
-
 ## Architecture Overview
 
 ```
@@ -42,8 +40,6 @@ Intent Classifier  (app/mcp_client.py)
                 ▼
         FastAPI returns ChatResponse
 ```
-
----
 
 ## Project Structure
 
@@ -90,8 +86,6 @@ project/
 └── README.md
 ```
 
----
-
 ## File Responsibilities
 
 Each file has one job. If you're unsure where something belongs:
@@ -107,8 +101,6 @@ Each file has one job. If you're unsure where something belongs:
 | `server.py` | What tools does an external MCP client see? |
 | `app/mcp_client.py` | Which tool should run for this message? |
 | `app/main.py` | What HTTP endpoints exist? |
-
----
 
 ## Tools
 
@@ -126,8 +118,6 @@ Best for: multi-dimensional analysis, correlations, trend comparisons, "why" que
 Returns a human-friendly description of what the database contains and what kinds of questions can be answered. Not a raw schema dump — a conversational summary.
 
 Best for: "what data do you have?", "what can I ask?", onboarding new users.
-
----
 
 ## Setup
 
@@ -155,8 +145,6 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 > **Note:** The FastAPI app calls tool functions directly (not over HTTP), so it works without the MCP server running. The MCP server is only needed for external MCP clients.
-
----
 
 ## API
 
@@ -228,8 +216,6 @@ uvicorn app.main:app --reload --port 8000
 { "status": "ok" }
 ```
 
----
-
 ## Adding a New Tool
 
 1. Write node logic in `mcp_server/pipelines/<new_pipeline>/nodes.py`
@@ -240,8 +226,6 @@ uvicorn app.main:app --reload --port 8000
 6. Add routing logic for it in `call_tool()` and `classify_intent()` in `mcp_client.py`
 
 If the new tool shares nodes with an existing pipeline (e.g. `get_schema`), import from `mcp_server/shared/nodes.py` — don't duplicate.
-
----
 
 ## Tech Stack
 
