@@ -14,10 +14,6 @@ from mcp_server.shared.nodes import get_schema_dict
 from pydantic_models.agentState import AgentState
 from pydantic_models.analysisState import AnalysisState
 
-
-# ---------------------------------------------------------------------------
-# Tool: query_database — single question, single SQL query
-# ---------------------------------------------------------------------------
 def run_query_database(question: str) -> dict:
     initial_state = AgentState(question=question)
 
@@ -36,10 +32,6 @@ def run_query_database(question: str) -> dict:
         "attempts": final.attempts,
     }
 
-
-# ---------------------------------------------------------------------------
-# Tool: deep_analysis — complex question, multiple queries, chart data
-# ---------------------------------------------------------------------------
 def run_deep_analysis(question: str) -> dict:
     initial_state = AnalysisState(question=question)
 
@@ -59,10 +51,5 @@ def run_deep_analysis(question: str) -> dict:
         "chart_data": final.chart_data,
     }
 
-
-# ---------------------------------------------------------------------------
-# Tool: describe_data — human-friendly description of what's in the DB
-# (NOT a raw schema dump — that's an internal concern)
-# ---------------------------------------------------------------------------
 def run_describe_data() -> dict:
     return get_schema_dict()

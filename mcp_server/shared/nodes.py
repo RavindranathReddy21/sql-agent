@@ -14,10 +14,6 @@ from app.db import engine
 from sqlalchemy import inspect
 from pydantic_models.agentState import AgentState
 
-
-# ---------------------------------------------------------------------------
-# Safety — shared utility used by any pipeline that executes SQL
-# ---------------------------------------------------------------------------
 BLOCKED_KEYWORDS = [
     "DROP", "DELETE", "ALTER", "UPDATE", "INSERT", "CREATE",
     "TRUNCATE", "EXEC", "GRANT", "REVOKE", "MERGE", "CALL",
@@ -33,14 +29,6 @@ def is_safe_query(query: str) -> bool:
     return not any(kw in query_upper for kw in BLOCKED_KEYWORDS)
 
 
-# ---------------------------------------------------------------------------
-# get_schema — single source of truth for reading the DB structure
-#
-# Used by:
-#   - pipelines/query/graph.py       (first node in query pipeline)
-#   - pipelines/deep_analysis/graph.py (first node in deep_analysis pipeline)
-#   - tools/database_tools.py        (for the describe_data tool)
-# ---------------------------------------------------------------------------
 def get_schema(state: AgentState) -> AgentState:
     """
     Inspects the database and stores the full schema in state.db_schema.

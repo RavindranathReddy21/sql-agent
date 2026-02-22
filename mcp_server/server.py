@@ -26,10 +26,6 @@ mcp = FastMCP(
 - For greetings and general conversation → reply directly, no tools needed"""
 )
 
-
-# ---------------------------------------------------------------------------
-# Tool 1 — Simple data question
-# ---------------------------------------------------------------------------
 @mcp.tool()
 def query_database(question: str) -> str:
     """
@@ -54,10 +50,6 @@ def query_database(question: str) -> str:
 
     return "\n".join(lines)
 
-
-# ---------------------------------------------------------------------------
-# Tool 2 — Complex analytical question
-# ---------------------------------------------------------------------------
 @mcp.tool()
 def deep_analysis(question: str) -> str:
     """
@@ -93,10 +85,6 @@ def deep_analysis(question: str) -> str:
 
     return "\n".join(lines)
 
-
-# ---------------------------------------------------------------------------
-# Tool 3 — What data is available
-# ---------------------------------------------------------------------------
 @mcp.tool()
 def describe_data() -> str:
     """

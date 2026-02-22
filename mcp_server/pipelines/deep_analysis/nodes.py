@@ -19,10 +19,6 @@ from mcp_server.shared.nodes import is_safe_query
 
 MAX_ATTEMPTS = 3
 
-
-# ---------------------------------------------------------------------------
-# Node 1 — Break the complex question into focused sub-questions
-# ---------------------------------------------------------------------------
 def decompose_question(state: AnalysisState) -> AnalysisState:
     """
     Calls the LLM with the question + schema.
@@ -69,10 +65,6 @@ Example: ["sub-question 1", "sub-question 2", "sub-question 3"]"""
 
     return state
 
-
-# ---------------------------------------------------------------------------
-# Node 2 — Generate and execute a SQL query for each sub-question
-# ---------------------------------------------------------------------------
 def generate_and_execute_all(state: AnalysisState) -> AnalysisState:
     """
     Loops through state.sub_questions.
@@ -134,10 +126,6 @@ Rules:
     state.results = results
     return state
 
-
-# ---------------------------------------------------------------------------
-# Node 3 — Synthesize all results into a coherent insight
-# ---------------------------------------------------------------------------
 def synthesize_insights(state: AnalysisState) -> AnalysisState:
     """
     Calls the LLM with ALL sub-questions and their results together.
@@ -176,10 +164,6 @@ Synthesize ALL the results into a single coherent analytical response:
 
     return state
 
-
-# ---------------------------------------------------------------------------
-# Node 4 — Build chart-ready data from the results (optional)
-# ---------------------------------------------------------------------------
 def build_chart_data(state: AnalysisState) -> AnalysisState:
     """
     Calls the LLM to decide if a chart would help, and if so,

@@ -16,10 +16,6 @@ from mcp_server.shared.nodes import is_safe_query
 
 MAX_ATTEMPTS = 3
 
-
-# ---------------------------------------------------------------------------
-# Node: sql_generator
-# ---------------------------------------------------------------------------
 def sql_generator(state: AgentState) -> AgentState:
     """
     Calls the LLM with the schema + question → produces one SQL query.
@@ -68,10 +64,6 @@ Rules:
 
     return state
 
-
-# ---------------------------------------------------------------------------
-# Node: execute_query
-# ---------------------------------------------------------------------------
 def execute_query(state: AgentState) -> AgentState:
     """
     Safely executes state.sql_query against the database.
@@ -95,10 +87,6 @@ def execute_query(state: AgentState) -> AgentState:
 
     return state
 
-
-# ---------------------------------------------------------------------------
-# Node: explain_results
-# ---------------------------------------------------------------------------
 def explain_results(state: AgentState) -> AgentState:
     """
     Calls the LLM with the raw SQL results → plain English explanation.
@@ -125,10 +113,6 @@ Respond with only the explanation."""
 
     return state
 
-
-# ---------------------------------------------------------------------------
-# Routing — used by graph.py to decide what comes after execute_query
-# ---------------------------------------------------------------------------
 def route_after_execution(state: AgentState) -> str:
     if state.error and state.attempts < MAX_ATTEMPTS:
         return "retry"
