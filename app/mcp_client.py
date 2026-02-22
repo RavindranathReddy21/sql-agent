@@ -1,149 +1,197 @@
 """
-app/mcp_client.py — Connects FastAPI to the MCP server.
+app/mcp_client.py — Agent that classifies intent and calls tools directly.
 
-Sends the user message + tool definitions to the LLM.
-If the LLM picks a tool → calls the MCP server → gets the result.
-Then calls the LLM again to form a natural final reply.
+The MCP server protocol (SSE/JSON-RPC) is designed for external MCP clients
+like Claude Desktop or Cursor. For internal use within the same Python process,
+we call the tool logic functions directly — no HTTP needed.
+
+Flow:
+  1. classify_intent()  → which tool to call (or none)?
+  2. call tool function directly from database_tools.py
+  3. form_reply()       → turn raw result into a conversational response
 """
 
 import json
-import httpx
 from app.llm import llm
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from pydantic import BaseModel
+from typing import Literal, Optional
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-MCP_SERVER_URL = "http://localhost:8001"
+# Import tool logic directly — no HTTP calls needed
+from mcp_server.tools.database_tools import (
+    run_query_database,
+    run_deep_analysis,
+    run_describe_data,
+)
 
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "query_database",
-            "description": (
-                "Answer a single data question using the database. "
-                "Use for straightforward questions about numbers, totals, counts, "
-                "or simple comparisons — anything answerable with one SQL query. "
-                "Examples: total sales, top customers, orders last month. "
-                "Do NOT use for complex multi-angle analysis — use deep_analysis instead."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string", "description": "The data question in plain English"}
-                },
-                "required": ["question"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "deep_analysis",
-            "description": (
-                "Answer a complex analytical question requiring multiple queries and synthesized insights. "
-                "Use when the question involves multiple dimensions, correlations, trend analysis, "
-                "or anything where one SQL query clearly won't be enough. "
-                "Returns insights in plain English plus a chart if the data supports it."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string", "description": "The complex analytical question"}
-                },
-                "required": ["question"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "describe_data",
-            "description": (
-                "Describe what data is available and what kinds of questions can be answered. "
-                "Use when the user asks 'what data do you have?', 'what can I ask?', "
-                "'what tables are there?', or similar questions about data availability."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    }
-]
+class IntentClassification(BaseModel):
+    tool: Literal["query_database", "deep_analysis", "describe_data", "none"]
 
 
-async def call_mcp_tool(tool_name: str, arguments: dict) -> str:
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        try:
-            response = await client.post(
-                f"{MCP_SERVER_URL}/tools/{tool_name}",
-                json={"arguments": arguments}
-            )
-            response.raise_for_status()
-            data = response.json()
-            content = data.get("content", [])
-            return " ".join(block.get("text", "") for block in content if block.get("type") == "text")
-        except httpx.HTTPError as e:
-            return f"Error calling tool '{tool_name}': {str(e)}"
+CLASSIFICATION_PROMPT = """You are a routing assistant. Given a user message, decide which tool to use.
+Tools:
+- query_database: simple data questions answerable with ONE SQL query
+  (totals, counts, top N, filters, averages, single metric lookups)
+- deep_analysis: complex questions needing MULTIPLE queries and synthesized insights
+  (multi-dimensional, correlations, trends across different areas, "why" questions,
+  questions asking for both highest AND lowest, comparisons across segments)
+- describe_data: user asks what data exists, what tables there are, what can be asked
+- none: greetings, general conversation, anything not data-related
+When in doubt between query_database and deep_analysis:
+- Single number or list → query_database
+- Multiple angles or comparisons in one question → deep_analysis"""
 
+
+async def classify_intent(user_message: str, chat_history: list[dict]) -> str:
+    structured_llm = llm.with_structured_output(IntentClassification)
+
+    history_text = ""
+    if chat_history:
+        recent = chat_history[-4:]
+        history_text = "\nRecent conversation:\n" + "\n".join(
+            f"{m['role'].upper()}: {m['content']}" for m in recent
+        ) + "\n"
+
+    messages = [
+        SystemMessage(content=CLASSIFICATION_PROMPT),
+        HumanMessage(content=f"{history_text}User message: {user_message}"),
+    ]
+
+    try:
+        result = structured_llm.invoke(messages)
+        return result.tool
+    except Exception:
+        return "query_database"
+
+def call_tool(tool_name: str, question: str) -> dict:
+    """Calls the right tool function and returns a standardized result dict."""
+    if tool_name == "query_database":
+        return run_query_database(question)
+    elif tool_name == "deep_analysis":
+        return run_deep_analysis(question)
+    elif tool_name == "describe_data":
+        return run_describe_data()
+    else:
+        return {"success": False, "error": f"Unknown tool: {tool_name}"}
+
+
+def format_tool_result(tool_name: str, result: dict) -> str:
+    """Formats the raw tool result into a readable string for the LLM."""
+    if not result.get("success"):
+        return f"Tool failed: {result.get('error', 'Unknown error')}"
+
+    if tool_name == "query_database":
+        parts = []
+        if result.get("explanation"):
+            parts.append(result["explanation"])
+        if result.get("sql_query"):
+            parts.append(f"SQL used:\n```sql\n{result['sql_query']}\n```")
+        return "\n\n".join(parts)
+
+    elif tool_name == "deep_analysis":
+        parts = []
+        if result.get("insights"):
+            parts.append(result["insights"])
+        if result.get("sub_questions") and result.get("queries"):
+            parts.append("Sub-queries run:")
+            for i, (q, sql) in enumerate(zip(result["sub_questions"], result["queries"]), 1):
+                parts.append(f"{i}. {q}")
+                if sql and not sql.startswith("ERROR"):
+                    parts.append(f"```sql\n{sql}\n```")
+        return "\n\n".join(parts)
+
+    elif tool_name == "describe_data":
+        if not result.get("schema"):
+            return "Could not retrieve schema."
+        lines = ["Here's what data is available:\n"]
+        for table_name, info in result["schema"].items():
+            col_names = [col["name"] for col in info["columns"]]
+            lines.append(f"**{table_name.replace('_', ' ').title()}**")
+            lines.append(f"  Fields: {', '.join(col_names)}")
+            if info["foreign_keys"]:
+                refs = [fk["references"] for fk in info["foreign_keys"]]
+                lines.append(f"  Linked to: {', '.join(refs)}")
+            lines.append("")
+        return "\n".join(lines)
+
+    return str(result)
+
+async def form_reply(
+    user_message: str,
+    tool_result_text: str,
+    chat_history: list[dict],
+) -> str:
+    history_messages = []
+    for msg in chat_history[-6:]:
+        if msg["role"] == "user":
+            history_messages.append(HumanMessage(content=msg["content"]))
+        elif msg["role"] == "assistant":
+            history_messages.append(AIMessage(content=msg["content"]))
+
+    messages = [
+        SystemMessage(content="""You are a helpful data assistant.
+Present the data results clearly and conversationally.
+Do not mention SQL, tools, or technical details unless asked.
+Be concise and focus on what the data means."""),
+        *history_messages,
+        HumanMessage(content=f"User asked: {user_message}\n\nData retrieved:\n{tool_result_text}\n\nPresent this clearly."),
+    ]
+
+    try:
+        response = await llm.ainvoke(messages)
+        return response.content.strip()
+    except Exception:
+        return tool_result_text
 
 async def run_agent(user_message: str, chat_history: list[dict] = None) -> dict:
     chat_history = chat_history or []
 
-    system_prompt = """You are a helpful data assistant. You have tools to query a business database.
-
-- Simple data questions (totals, counts, top N) → query_database
-- Complex analytical questions (multi-dimensional, correlations, trends) → deep_analysis
-- Questions about what data exists → describe_data
-- Greetings and general conversation → reply directly, no tools
-
-Always be friendly and concise."""
-
-    messages = [SystemMessage(content=system_prompt)]
-    for msg in chat_history:
-        if msg["role"] == "user":
-            messages.append(HumanMessage(content=msg["content"]))
-        elif msg["role"] == "assistant":
-            messages.append(AIMessage(content=msg["content"]))
-    messages.append(HumanMessage(content=user_message))
-
-    llm_with_tools = llm.bind_tools(TOOLS)
-    response = await llm_with_tools.ainvoke(messages)
+    # Step 1: classify
+    tool_name = await classify_intent(user_message, chat_history)
 
     tool_used = None
     sql_query = None
     chart_data = None
 
-    if response.tool_calls:
-        tool_call = response.tool_calls[0]
-        tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
+    if tool_name == "none":
+        # Direct conversational reply
+        history_messages = []
+        for msg in chat_history[-6:]:
+            if msg["role"] == "user":
+                history_messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                history_messages.append(AIMessage(content=msg["content"]))
+
+        messages = [
+            SystemMessage(content="You are a helpful data assistant. Answer conversationally. For data questions, let the user know you can query the database."),
+            *history_messages,
+            HumanMessage(content=user_message),
+        ]
+        response = await llm.ainvoke(messages)
+        reply = response.content.strip()
+
+    else:
+        # Step 2: call tool directly
         tool_used = tool_name
+        raw_result = call_tool(tool_name, user_message)
 
-        tool_result = await call_mcp_tool(tool_name, tool_args)
-
-        # Extract SQL if present
-        if "```sql" in tool_result:
-            start = tool_result.find("```sql") + 6
-            end = tool_result.find("```", start)
-            sql_query = tool_result[start:end].strip()
+        # Extract SQL for the response metadata
+        if tool_name == "query_database" and raw_result.get("sql_query"):
+            sql_query = raw_result["sql_query"]
+        elif tool_name == "deep_analysis" and raw_result.get("queries"):
+            sql_query = "\n---\n".join(
+                q for q in raw_result["queries"] if q and not q.startswith("ERROR")
+            )
 
         # Extract chart data if present
-        if "CHART_DATA:" in tool_result:
-            try:
-                start = tool_result.find("```json\n", tool_result.find("CHART_DATA:")) + 8
-                end = tool_result.find("```", start)
-                chart_data = json.loads(tool_result[start:end].strip())
-            except Exception:
-                chart_data = None
+        if tool_name == "deep_analysis" and raw_result.get("chart_data"):
+            chart_data = raw_result["chart_data"]
 
-        messages.append(response)
-        messages.append(ToolMessage(content=tool_result, tool_call_id=tool_call["id"]))
+        # Format result for LLM
+        tool_result_text = format_tool_result(tool_name, raw_result)
 
-        final_response = await llm_with_tools.ainvoke(messages)
-        reply = final_response.content
-    else:
-        reply = response.content
+        # Step 3: form natural reply
+        reply = await form_reply(user_message, tool_result_text, chat_history)
 
     return {
         "reply": reply,

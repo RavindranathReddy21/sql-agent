@@ -34,21 +34,18 @@ Failed query:
 
 Fix the query based on the error above.
 """
-
     system_prompt = f"""You are an expert SQL assistant. Generate a correct SQL query for the given question.
-
-Database Schema:
-{state.db_schema}
-
-Rules:
-- Use only tables and columns from the schema above
-- This is a SQLite database
-- Date columns are TEXT in format 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM'
-- For date filtering use strftime(): strftime('%Y', date_col) = '2023'
-- Always alias aggregated columns: SUM(amount) AS total_revenue
-- Use JOINs based on the foreign key relationships in the schema
-- Return only the SQL query, no explanation
-{error_context}"""
+    Database Schema:
+    {state.db_schema}
+    Rules:
+    - Use only tables and columns from the schema above
+    - This is a SQLite database
+    - Date columns are TEXT in format 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM'
+    - For date filtering use strftime(): strftime('%Y', date_col) = '2023'
+    - Always alias aggregated columns: SUM(amount) AS total_revenue
+    - Use JOINs based on the foreign key relationships in the schema
+    - Return only the SQL query, no explanation
+    {error_context}"""
 
     messages = [
         SystemMessage(content=system_prompt),
@@ -93,11 +90,11 @@ def explain_results(state: AgentState) -> AgentState:
     Stored in state.natural_language_output.
     """
     system_prompt = """You are a helpful data analyst. Explain the SQL results in plain English.
-- Directly answer what the data shows
-- Highlight key numbers, trends, or insights
-- Avoid mentioning SQL, table names, or column names
-- Be concise and clear
-Respond with only the explanation."""
+    - Directly answer what the data shows
+    - Highlight key numbers, trends, or insights
+    - Avoid mentioning SQL, table names, or column names
+    - Be concise and clear
+    Respond with only the explanation."""
 
     messages = [
         SystemMessage(content=system_prompt),

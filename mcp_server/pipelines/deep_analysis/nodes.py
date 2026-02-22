@@ -36,13 +36,11 @@ def decompose_question(state: AnalysisState) -> AnalysisState:
          ]
     """
     system_prompt = f"""You are an expert data analyst. Break the following complex question 
-into 2-4 focused sub-questions that can each be answered with a single SQL query.
-
-Database Schema:
-{state.db_schema}
-
-Return a JSON array of sub-question strings. Nothing else.
-Example: ["sub-question 1", "sub-question 2", "sub-question 3"]"""
+    into 2-4 focused sub-questions that can each be answered with a single SQL query.
+    Database Schema:
+    {state.db_schema}
+    Return a JSON array of sub-question strings. Nothing else.
+    Example: ["sub-question 1", "sub-question 2", "sub-question 3"]"""
 
     messages = [
         SystemMessage(content=system_prompt),
@@ -86,16 +84,14 @@ def generate_and_execute_all(state: AnalysisState) -> AnalysisState:
     for sub_question in state.sub_questions:
         # Reuse the same prompt structure as the query pipeline
         system_prompt = f"""You are an expert SQL assistant. Generate a correct SQL query.
-
-Database Schema:
-{state.db_schema}
-
-Rules:
-- SQLite database
-- Date columns are TEXT: use strftime('%Y', date_col) = '2023'
-- Always alias aggregated columns
-- Use JOINs based on foreign keys in the schema
-- Return only the SQL query"""
+        Database Schema:
+        {state.db_schema}
+        Rules:
+        - SQLite database
+        - Date columns are TEXT: use strftime('%Y', date_col) = '2023'
+        - Always alias aggregated columns
+        - Use JOINs based on foreign keys in the schema
+        - Return only the SQL query"""
 
         messages = [
             SystemMessage(content=system_prompt),
@@ -141,14 +137,13 @@ def synthesize_insights(state: AnalysisState) -> AnalysisState:
     combined_context = "\n\n".join(context_parts)
 
     system_prompt = """You are a senior data analyst. You have the results of multiple 
-database queries that together answer a complex business question.
-
-Synthesize ALL the results into a single coherent analytical response:
-- Answer the original question directly
-- Highlight connections and correlations between the different results
-- Call out the most important numbers, trends, and insights
-- Use plain English — no SQL, no column names, no table names
-- Structure with short paragraphs or bullet points for readability"""
+    database queries that together answer a complex business question.
+    Synthesize ALL the results into a single coherent analytical response:
+    - Answer the original question directly
+    - Highlight connections and correlations between the different results
+    - Call out the most important numbers, trends, and insights
+    - Use plain English — no SQL, no column names, no table names
+    - Structure with short paragraphs or bullet points for readability"""
 
     messages = [
         SystemMessage(content=system_prompt),
@@ -188,19 +183,16 @@ def build_chart_data(state: AnalysisState) -> AnalysisState:
     combined_context = "\n\n".join(context_parts)
 
     system_prompt = """You are a data visualization expert. Given query results, 
-decide if a chart would help communicate the insights.
-
-If YES: return a JSON object with this exact structure:
-{
-  "type": "bar" | "line" | "pie",
-  "title": "descriptive chart title",
-  "labels": ["label1", "label2"],
-  "datasets": [{ "label": "series name", "data": [num1, num2] }]
-}
-
-If NO chart is appropriate: return exactly the string "NO_CHART"
-
-Return only the JSON or "NO_CHART". Nothing else."""
+    decide if a chart would help communicate the insights.
+    If YES: return a JSON object with this exact structure:
+    {
+    "type": "bar" | "line" | "pie",
+    "title": "descriptive chart title",
+    "labels": ["label1", "label2"],
+    "datasets": [{ "label": "series name", "data": [num1, num2] }]
+    }
+    If NO chart is appropriate: return exactly the string "NO_CHART"
+    Return only the JSON or "NO_CHART". Nothing else."""
 
     messages = [
         SystemMessage(content=system_prompt),
