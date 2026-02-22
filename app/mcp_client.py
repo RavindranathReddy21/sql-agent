@@ -1,35 +1,34 @@
+"""
+app/mcp_client.py — Connects FastAPI to the MCP server.
+
+Sends the user message + tool definitions to the LLM.
+If the LLM picks a tool → calls the MCP server → gets the result.
+Then calls the LLM again to form a natural final reply.
+"""
+
 import json
 import httpx
-from typing import Any
 from app.llm import llm
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
-# MCP Server base URL
 MCP_SERVER_URL = "http://localhost:8001"
 
-# ---------------------------------------------------------------------------
-# Tool definitions — these are sent to the LLM so it knows what's available.
-# The descriptions here MUST match the intent of the MCP server tools.
-# ---------------------------------------------------------------------------
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "query_database",
             "description": (
-                "Query the database using a natural language question. "
-                "Use this tool when the user asks about data, numbers, statistics, "
-                "sales, revenue, customers, orders, products, or any analytical "
-                "question that requires looking up information from the database. "
-                "Do NOT use this for greetings, general conversation, or non-data questions."
+                "Answer a single data question using the database. "
+                "Use for straightforward questions about numbers, totals, counts, "
+                "or simple comparisons — anything answerable with one SQL query. "
+                "Examples: total sales, top customers, orders last month. "
+                "Do NOT use for complex multi-angle analysis — use deep_analysis instead."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "question": {
-                        "type": "string",
-                        "description": "The user's question in plain English"
-                    }
+                    "question": {"type": "string", "description": "The data question in plain English"}
                 },
                 "required": ["question"]
             }
@@ -38,11 +37,30 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_schema",
+            "name": "deep_analysis",
             "description": (
-                "Returns the full database schema — all tables, columns, data types, "
-                "and relationships. Use this when the user asks what data is available, "
-                "what tables exist, or what kinds of questions can be answered."
+                "Answer a complex analytical question requiring multiple queries and synthesized insights. "
+                "Use when the question involves multiple dimensions, correlations, trend analysis, "
+                "or anything where one SQL query clearly won't be enough. "
+                "Returns insights in plain English plus a chart if the data supports it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "The complex analytical question"}
+                },
+                "required": ["question"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "describe_data",
+            "description": (
+                "Describe what data is available and what kinds of questions can be answered. "
+                "Use when the user asks 'what data do you have?', 'what can I ask?', "
+                "'what tables are there?', or similar questions about data availability."
             ),
             "parameters": {
                 "type": "object",
@@ -54,14 +72,8 @@ TOOLS = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Call a tool on the MCP server
-# ---------------------------------------------------------------------------
 async def call_mcp_tool(tool_name: str, arguments: dict) -> str:
-    """
-    Sends a tool call to the MCP server and returns the result as a string.
-    """
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             response = await client.post(
                 f"{MCP_SERVER_URL}/tools/{tool_name}",
@@ -69,36 +81,24 @@ async def call_mcp_tool(tool_name: str, arguments: dict) -> str:
             )
             response.raise_for_status()
             data = response.json()
-            # MCP tool responses come back as a list of content blocks
             content = data.get("content", [])
             return " ".join(block.get("text", "") for block in content if block.get("type") == "text")
         except httpx.HTTPError as e:
             return f"Error calling tool '{tool_name}': {str(e)}"
 
 
-# ---------------------------------------------------------------------------
-# Main agent function — given a user message, decide whether to use a tool
-# or just reply, then return the final answer.
-# ---------------------------------------------------------------------------
 async def run_agent(user_message: str, chat_history: list[dict] = None) -> dict:
-    """
-    Runs the agentic loop:
-    1. Send message + tools to LLM
-    2. If LLM wants to call a tool → call MCP server → send result back to LLM
-    3. If LLM replies directly → return that reply
-    Returns a dict with: reply, tool_used, sql_query (if any)
-    """
     chat_history = chat_history or []
 
-    system_prompt = """You are a helpful data assistant. You have access to tools that let you query a database.
+    system_prompt = """You are a helpful data assistant. You have tools to query a business database.
 
-    - For data questions (sales, customers, orders, numbers, reports) → use the query_database tool
-    - For schema questions (what tables exist, what data is available) → use the get_schema tool  
-    - For greetings, general chat, or non-data questions → reply directly, do NOT use any tools
+- Simple data questions (totals, counts, top N) → query_database
+- Complex analytical questions (multi-dimensional, correlations, trends) → deep_analysis
+- Questions about what data exists → describe_data
+- Greetings and general conversation → reply directly, no tools
 
-    Always be friendly and concise."""
+Always be friendly and concise."""
 
-    # Build messages list
     messages = [SystemMessage(content=system_prompt)]
     for msg in chat_history:
         if msg["role"] == "user":
@@ -107,45 +107,47 @@ async def run_agent(user_message: str, chat_history: list[dict] = None) -> dict:
             messages.append(AIMessage(content=msg["content"]))
     messages.append(HumanMessage(content=user_message))
 
-    # Bind tools to the LLM
     llm_with_tools = llm.bind_tools(TOOLS)
-
-    # --- First LLM call ---
     response = await llm_with_tools.ainvoke(messages)
 
     tool_used = None
     sql_query = None
+    chart_data = None
 
-    # Check if the LLM wants to call a tool
     if response.tool_calls:
-        tool_call = response.tool_calls[0]  # handle first tool call
+        tool_call = response.tool_calls[0]
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         tool_used = tool_name
 
-        # Call the MCP server
         tool_result = await call_mcp_tool(tool_name, tool_args)
 
-        # Extract SQL from result if present (for returning to the API caller)
+        # Extract SQL if present
         if "```sql" in tool_result:
             start = tool_result.find("```sql") + 6
             end = tool_result.find("```", start)
             sql_query = tool_result[start:end].strip()
 
-        # Add tool interaction to messages and call LLM again for final answer
+        # Extract chart data if present
+        if "CHART_DATA:" in tool_result:
+            try:
+                start = tool_result.find("```json\n", tool_result.find("CHART_DATA:")) + 8
+                end = tool_result.find("```", start)
+                chart_data = json.loads(tool_result[start:end].strip())
+            except Exception:
+                chart_data = None
+
         messages.append(response)
         messages.append(ToolMessage(content=tool_result, tool_call_id=tool_call["id"]))
 
-        # --- Second LLM call — formulate final reply ---
         final_response = await llm_with_tools.ainvoke(messages)
         reply = final_response.content
-
     else:
-        # LLM replied directly — no tool needed (e.g. "hi" → "Hello! How can I help?")
         reply = response.content
 
     return {
         "reply": reply,
         "tool_used": tool_used,
         "sql_query": sql_query,
+        "chart_data": chart_data,
     }

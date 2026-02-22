@@ -1,65 +1,68 @@
-import json
-from mcp_server.graph import graph
-from app.db import engine
+"""
+database_tools.py — Bridge between MCP server and the pipelines.
+
+One function per MCP tool. Each function:
+  1. Calls the right graph
+  2. Packages the result into a clean dict
+
+No logic here. No SQL here. No LLM calls here.
+"""
+
+from mcp_server.pipelines.query.graph import graph as query_graph
+from mcp_server.pipelines.deep_analysis.graph import graph as deep_analysis_graph
+from mcp_server.shared.nodes import get_schema_dict
 from pydantic_models.agentState import AgentState
-from sqlalchemy import inspect
+from pydantic_models.analysisState import AnalysisState
 
 
+# ---------------------------------------------------------------------------
+# Tool: query_database — single question, single SQL query
+# ---------------------------------------------------------------------------
 def run_query_database(question: str) -> dict:
-    """
-    Runs the full LangGraph pipeline:
-    get_schema → sql_generator → execute_query → convert_query_to_text
-    Returns a structured result dict.
-    """
-    state = AgentState(question=question)
+    initial_state = AgentState(question=question)
 
     try:
-        raw = graph.invoke(state)
+        raw = query_graph.invoke(initial_state)
         final = AgentState(**raw)
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "sql_query": None,
-            "result": None,
-            "explanation": None,
-            "attempts": 0,
-        }
+        return {"success": False, "error": str(e),
+                "sql_query": None, "explanation": None, "attempts": 0}
 
     return {
         "success": final.error is None,
         "error": final.error,
         "sql_query": final.sql_query,
-        "result": final.result,
         "explanation": final.natural_language_output,
         "attempts": final.attempts,
     }
 
 
-def run_get_schema() -> dict:
-    """
-    Returns the full database schema as a structured dict.
-    """
+# ---------------------------------------------------------------------------
+# Tool: deep_analysis — complex question, multiple queries, chart data
+# ---------------------------------------------------------------------------
+def run_deep_analysis(question: str) -> dict:
+    initial_state = AnalysisState(question=question)
+
     try:
-        inspector = inspect(engine)
-        tables = inspector.get_table_names()
-        db_schema = {}
-        for table in tables:
-            columns = inspector.get_columns(table)
-            foreign_keys = inspector.get_foreign_keys(table)
-            db_schema[table] = {
-                "columns": [
-                    {"name": col["name"], "type": str(col["type"])}
-                    for col in columns
-                ],
-                "foreign_keys": [
-                    {
-                        "column": fk["constrained_columns"],
-                        "references": f"{fk['referred_table']}.{fk['referred_columns']}"
-                    }
-                    for fk in foreign_keys
-                ]
-            }
-        return {"success": True, "schema": db_schema}
+        raw = deep_analysis_graph.invoke(initial_state)
+        final = AnalysisState(**raw)
     except Exception as e:
-        return {"success": False, "error": str(e), "schema": None}
+        return {"success": False, "error": str(e),
+                "insights": None, "chart_data": None, "queries": []}
+
+    return {
+        "success": final.error is None,
+        "error": final.error,
+        "sub_questions": final.sub_questions,
+        "queries": final.queries,
+        "insights": final.insights,
+        "chart_data": final.chart_data,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool: describe_data — human-friendly description of what's in the DB
+# (NOT a raw schema dump — that's an internal concern)
+# ---------------------------------------------------------------------------
+def run_describe_data() -> dict:
+    return get_schema_dict()
