@@ -5,23 +5,18 @@ from typing import Optional, Any
 from app.mcp_client import run_agent
 
 
-# ---------------------------------------------------------------------------
-# Request / Response models
-# ---------------------------------------------------------------------------
 class ChatRequest(BaseModel):
     message: str
-    history: Optional[list[dict]] = []   # [{"role": "user"|"assistant", "content": "..."}]
+    history: Optional[list[dict]] = []
 
 
 class ChatResponse(BaseModel):
     reply: str
-    tool_used: Optional[str] = None      # which MCP tool was called (if any)
-    sql_query: Optional[str] = None      # the generated SQL (if a DB query was made)
+    tool_used: Optional[str] = None
+    sql_query: Optional[str] = None
+    chart_data: Optional[Any] = None   # frontend renders this if present
 
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 app = FastAPI(title="AI SQL Assistant")
 
 app.add_middleware(
@@ -40,15 +35,6 @@ def health():
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
-    """
-    Main chat endpoint. Accepts a message and optional chat history.
-    The agent decides whether to call a database tool or reply directly.
-
-    Examples:
-      "hi"                        → plain reply, no tool
-      "what tables exist?"        → calls get_schema tool
-      "total sales in 2023?"      → calls query_database tool
-    """
     try:
         result = await run_agent(
             user_message=request.message,
@@ -61,4 +47,5 @@ async def chat(request: ChatRequest) -> ChatResponse:
         reply=result["reply"],
         tool_used=result["tool_used"],
         sql_query=result["sql_query"],
+        chart_data=result.get("chart_data"),
     )
