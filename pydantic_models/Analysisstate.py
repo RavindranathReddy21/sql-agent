@@ -31,3 +31,4 @@ class AnalysisState(BaseModel):
 
     # Error tracking
     error: Optional[str] = None
+    
